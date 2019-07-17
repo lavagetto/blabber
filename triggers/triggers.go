@@ -5,27 +5,30 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
+	"sort"
 
 	log "gopkg.in/inconshreveable/log15.v2"
 
 	hbot "github.com/whyrusleeping/hellabot"
 )
 
-type triggerFunc func(bot *hbot.Bot, m *hbot.Message) bool
+type TriggerFunc func(bot *hbot.Bot, m *hbot.Message) bool
 
+// EvHandler is the basic structure for holding information about an
+// irc trigger. For most interactive commands, where you want to define ACLs,
+// input validation, etc. you should use Command instead.
 type EvHandler struct {
-	condition triggerFunc
-	action    triggerFunc
+	condition TriggerFunc
+	action    TriggerFunc
 	HelpMsg   string
 }
 
 // NewHandler generates a new handler for use in code.
-func NewHandler(condition triggerFunc, action triggerFunc, HelpMsg string) *EvHandler {
+func NewHandler(condition TriggerFunc, action TriggerFunc, HelpMsg string) *EvHandler {
 	return &EvHandler{condition: condition, action: action, HelpMsg: HelpMsg}
 }
 func (ev *EvHandler) getTrigger() hbot.Trigger {
-	return hbot.Trigger{ev.condition, ev.action}
+	return hbot.Trigger{Condition: ev.condition, Action: ev.action}
 }
 
 // Registry is a container for all event handlers.
@@ -45,7 +48,9 @@ func NewRegistry(c *bot.Configuration, db *sql.DB) *Registry {
 
 type handlerClosure func(config *bot.Configuration, db *sql.DB) *EvHandler
 
-// Register an handler
+// Register an handler. This is the basic interface you should use if you're not crating
+// a proper command, but rather a trigger.
+// For interactive commands, please use RegisterCommand below.
 func (r *Registry) Register(id string, handler handlerClosure) error {
 	if _, ok := r.handlers[id]; ok {
 		msg := fmt.Sprintf("Cannot register handler with id '%s' twice", id)
@@ -55,6 +60,22 @@ func (r *Registry) Register(id string, handler handlerClosure) error {
 	return nil
 }
 
+// RegisterCommand allows to register a full-featured IRC command.
+func (r *Registry) RegisterCommand(command *Command) error {
+	return r.Register(command.ID, command.getHandler())
+}
+
+func (r *Registry) RegisterCommands(commands []*Command) error {
+	for _, command := range commands {
+		err := r.RegisterCommand(command)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Deregister removes one handler from the system.
 func (r *Registry) Deregister(id string) {
 	delete(r.handlers, id)
 }
@@ -80,54 +101,26 @@ func (r *Registry) addHelp(b *bot.Bot) {
 			return false
 		},
 		func(bot *hbot.Bot, m *hbot.Message) bool {
-			bot.Reply(m, fmt.Sprintf("%s - irc bot for handling outage", r.config.NickName))
+			bot.Reply(m, fmt.Sprintf("%s - irc bot for handling outages", r.config.NickName))
 			bot.Reply(m, "")
 			bot.Reply(m, "Available commands:")
-			bot.Reply(m, "!help\tPrints this message")
-			for id, EvHandler := range r.handlers {
+			bot.Reply(m, fmt.Sprintf("%-16s%s\n", "!help", "Prints this message"))
+			var handlers = make([]string, 0, len(r.handlers))
+			for id := range r.handlers {
+				handlers = append(handlers, id)
+			}
+			sort.Strings(handlers)
+			for _, id := range handlers {
+				EvHandler, ok := r.handlers[id]
+				if !ok {
+					// TODO: log something
+					continue
+				}
 				if EvHandler.HelpMsg != "" {
-					bot.Reply(m, fmt.Sprintf("%-30s%s\n", id, EvHandler.HelpMsg))
+					bot.Reply(m, fmt.Sprintf("%-16s%s\n", id, EvHandler.HelpMsg))
 				}
 			}
 			return true
 		},
 	})
-}
-
-func (r *Registry) help(bot *hbot.Bot) {
-	fmt.Println("")
-	fmt.Println("Available commands:")
-	fmt.Println("!help\tPrints this message")
-
-}
-
-// Closures!
-func RickRoll(c *bot.Configuration, db *sql.DB) *EvHandler {
-	var lyrics = []string{
-		"Never gonna give you up",
-		"Never gonna let you down",
-		"Never gonna run around and desert you",
-		"Never gonna make you cry",
-		"Never gonna say goodbye",
-		"Never gonna tell a lie and hurt you",
-	}
-	var condition = func(bot *hbot.Bot, m *hbot.Message) bool {
-		// Only public requests for singing will be accepted.
-		if m.Content == fmt.Sprintf("%s: sing!", c.NickName) {
-			for _, channel := range c.Channels {
-				if m.To == channel {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	var action = func(bot *hbot.Bot, m *hbot.Message) bool {
-		for _, line := range lyrics {
-			bot.Reply(m, line)
-			time.Sleep(800 * time.Millisecond)
-		}
-		return true
-	}
-	return &EvHandler{condition, action, "Sings a nice tune to you (public only). Format: sing!"}
 }

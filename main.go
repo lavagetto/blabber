@@ -17,6 +17,7 @@ GNU General Public License for more details.
 
 import (
 	"blabber/bot"
+	"blabber/contact"
 	"blabber/incident"
 	"blabber/triggers"
 	"flag"
@@ -40,13 +41,13 @@ func main() {
 	defer bbot.DB.Close()
 
 	registry := triggers.NewRegistry(conf, bbot.DB)
-	registry.Register("!sing", triggers.RickRoll)
+	// Basic bot - does rickrolling and manages ACLs
+	registry.RegisterCommands(triggers.IrcCommands)
+	// Incident related - the first is a simple event handler with no command associated
 	registry.Register("topic", incident.StoreTopic)
-	registry.Register("logtopic", incident.LogTopic)
-	registry.Register("!add_contact", triggers.AddContactHandler)
-	registry.Register("!get_contact", triggers.GetContactHandler)
-	registry.Register("!start_incident", incident.StartIncident)
+	registry.RegisterCommands(incident.IrcCommands)
+	// Contact list related
+	registry.RegisterCommands(contact.IrcCommands)
 	registry.AddAll(bbot)
-
 	bbot.Irc.Run()
 }

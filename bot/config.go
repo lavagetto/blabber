@@ -17,6 +17,7 @@ type Configuration struct {
 	Password   string   `json:"password"`
 	Channels   []string `json:"channels"`
 	DbDsn      string   `json:"db_dsn"`
+	Admins     []string `json:"admins"`
 }
 
 // GetConfig returns a configuration object
