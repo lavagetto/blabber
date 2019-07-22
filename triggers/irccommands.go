@@ -33,7 +33,7 @@ func rickRollAction(args []string, c *bot.Configuration, db *sql.DB) TriggerFunc
 var IrcCommands = []*Command{
 	NewCommand(
 		"sing",
-		".*",
+		"",
 		"Sings for you a nice tune",
 		true,
 		false,

@@ -90,37 +90,38 @@ func (r *Registry) AddAll(b *bot.Bot) {
 
 // Help prints out the help for the registered commands
 func (r *Registry) addHelp(b *bot.Bot) {
-	b.Irc.AddTrigger(hbot.Trigger{
-		func(bot *hbot.Bot, m *hbot.Message) bool {
-
-			if m.Command == "PRIVMSG" && m.Content == "!help" {
-				return true
-			} else if m.Content == fmt.Sprintf("%s: !help", r.config.NickName) {
-				return true
-			}
-			return false
-		},
-		func(bot *hbot.Bot, m *hbot.Message) bool {
-			bot.Reply(m, fmt.Sprintf("%s - irc bot for handling outages", r.config.NickName))
-			bot.Reply(m, "")
-			bot.Reply(m, "Available commands:")
-			bot.Reply(m, fmt.Sprintf("%-16s%s\n", "!help", "Prints this message"))
-			var handlers = make([]string, 0, len(r.handlers))
-			for id := range r.handlers {
-				handlers = append(handlers, id)
-			}
-			sort.Strings(handlers)
-			for _, id := range handlers {
-				EvHandler, ok := r.handlers[id]
-				if !ok {
-					// TODO: log something
-					continue
+	b.Irc.AddTrigger(
+		hbot.Trigger{
+			Condition: func(bot *hbot.Bot, m *hbot.Message) bool {
+				if m.Command == "PRIVMSG" && m.Content == "!help" {
+					return true
+				} else if m.Content == fmt.Sprintf("%s: !help", r.config.NickName) {
+					return true
 				}
-				if EvHandler.HelpMsg != "" {
-					bot.Reply(m, fmt.Sprintf("%-16s%s\n", id, EvHandler.HelpMsg))
+				return false
+			},
+			Action: func(bot *hbot.Bot, m *hbot.Message) bool {
+				bot.Reply(m, fmt.Sprintf("%s - irc bot for handling outages", r.config.NickName))
+				bot.Reply(m, "")
+				bot.Reply(m, "Available commands:")
+				bot.Reply(m, fmt.Sprintf("%-16s%s\n", "!help", "Prints this message"))
+				var handlers = make([]string, 0, len(r.handlers))
+				for id := range r.handlers {
+					handlers = append(handlers, id)
 				}
-			}
-			return true
+				sort.Strings(handlers)
+				for _, id := range handlers {
+					EvHandler, ok := r.handlers[id]
+					if !ok {
+						// TODO: log something
+						continue
+					}
+					if EvHandler.HelpMsg != "" {
+						bot.Reply(m, fmt.Sprintf("%-16s%s\n", id, EvHandler.HelpMsg))
+					}
+				}
+				return true
+			},
 		},
-	})
+	)
 }

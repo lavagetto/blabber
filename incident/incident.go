@@ -101,6 +101,16 @@ func (i *Incident) Save(db *sql.DB) error {
 	return err
 }
 
+// UpdateDescription updates the current description with an update.
+// If the description is not empty, a date header gets added to mark this as an update.
+func (i *Incident) UpdateDescription(update string) {
+	if i.Description != "" {
+		humanTime := time.Now().Format("15:04 Jan 2 2006")
+		i.Description += fmt.Sprintf("UPDATE %s\n", humanTime)
+	}
+	i.Description += fmt.Sprintf("%s\n-- \n", update)
+}
+
 // Summary formats a simple summary of an incident
 func (i *Incident) Summary() string {
 	if i.Status == StatusClosed {
@@ -198,24 +208,40 @@ func updateTopic(irc *hbot.Bot, db *sql.DB, channel string) error {
 		}
 		status = strings.Join(summaries, " / ")
 	}
-	topicRegex := regexp.MustCompile("^(.*)\\| Status: [^\\|]+(.*)$")
+	topicRegex := regexp.MustCompile("^(.*)\\| Status: ([^\\|]+)(.*)$")
 	matches := topicRegex.FindStringSubmatch(*topic)
 	// No status line. Append it to the end of the topic
 	if matches == nil {
 		irc.Topic(channel, fmt.Sprintf("%s | Status: %s", *topic, status))
 	} else {
-		irc.Topic(channel, fmt.Sprintf("%s | Status: %s%s", matches[1], status, matches[2]))
+		if matches[3] != "" {
+			// Add Padding
+			status += " "
+		}
+		if status != matches[2] {
+			newTopic := fmt.Sprintf("%s | Status: %s%s", matches[1], status, matches[3])
+			irc.Topic(channel, newTopic)
+		}
 	}
 	return err
+}
+
+func parseSeverity(severityString string, irc *hbot.Bot, m *hbot.Message) int64 {
+	severity, err := strconv.ParseInt(severityString, 10, 64)
+	if err != nil || severity > 5 || severity < 1 {
+		irc.Reply(m, "Couldn't parse severity. It's supposed to be a number between 1 and 5.")
+		return 0
+	}
+	return severity
+
 }
 
 // startIncident handles starting an incident
 func startIncident(args []string, c *bot.Configuration, db *sql.DB) triggers.TriggerFunc {
 	splitRegex := regexp.MustCompile(",\\s*")
 	return func(irc *hbot.Bot, m *hbot.Message) bool {
-		severity, err := strconv.ParseInt(args[0], 10, 64)
-		if err != nil {
-			irc.Reply(m, "Couldn't parse severity. It's supposed to be a number between 1 and 5.")
+		severity := parseSeverity(args[0], irc, m)
+		if severity == 0 {
 			return true
 		}
 		components := splitRegex.Split(args[1], -1)
@@ -239,33 +265,81 @@ func startIncident(args []string, c *bot.Configuration, db *sql.DB) triggers.Tri
 	}
 }
 
+func getIncidentFromIDParam(idString string, irc *hbot.Bot, m *hbot.Message, db *sql.DB) *Incident {
+	id, err := strconv.ParseInt(idString, 10, 64)
+	if err != nil {
+		irc.Reply(m, "Couldn't parse the incident id.")
+		return nil
+	}
+
+	inc, err := GetByID(db, id)
+	if inc == nil {
+		irc.Reply(m, "Incident not found.")
+		if err != nil {
+			log.Error("Could not get incident by id", "error", err.Error(), "id", id)
+		}
+		return nil
+	}
+	return inc
+}
+
+func saveIncident(incident *Incident, db *sql.DB, irc *hbot.Bot, m *hbot.Message) bool {
+	err := incident.Save(db)
+	if err != nil {
+		log.Error("Could not update incident", "error", err.Error(), "incident", incident.ID)
+		return false
+	}
+	if err = updateTopic(irc, db, m.To); err != nil {
+		irc.Reply(m, "Could not update the channel topic. Check my permissions please.")
+		log.Error("Error updating the channel topic", "error", err.Error())
+	}
+	return true
+}
+
 func stopIncident(args []string, c *bot.Configuration, db *sql.DB) triggers.TriggerFunc {
 	return func(irc *hbot.Bot, m *hbot.Message) bool {
-		id, err := strconv.ParseInt(args[0], 10, 64)
-		if err != nil {
-			irc.Reply(m, "Couldn't parse the incident id.")
+		inc := getIncidentFromIDParam(args[0], irc, m, db)
+		if inc == nil {
 			return true
 		}
-
-		inc, err := GetByID(db, id)
-		if inc == nil {
-			irc.Reply(m, "Incident not found.")
-			if err != nil {
-				log.Error("Could not get incident by id", "error", err.Error(), "id", id)
-			}
+		if inc.Status == StatusClosed {
+			irc.Reply(m, "This incident is already closed.")
 			return true
 		}
 		inc.Status = StatusClosed
-		err = inc.Save(db)
-		if err != nil {
+		if saveIncident(inc, db, irc, m) {
+			irc.Reply(m, fmt.Sprintf("Incident closed: %d", inc.ID))
+		} else {
 			irc.Reply(m, "Could not close the incident, see logs for details.")
-			log.Error("Could not update incident", "error", err.Error(), "incident", inc.Summary())
 		}
-		if err = updateTopic(irc, db, m.To); err != nil {
-			irc.Reply(m, "Could not update the channel topic. Check my permissions please.")
-			log.Error("Error updating the topic", "error", err.Error())
+		return true
+	}
+}
+
+func updateIncident(args []string, c *bot.Configuration, db *sql.DB) triggers.TriggerFunc {
+	return func(irc *hbot.Bot, m *hbot.Message) bool {
+		inc := getIncidentFromIDParam(args[0], irc, m, db)
+		if inc == nil {
+			return true
 		}
-		irc.Reply(m, fmt.Sprintf("Incident closed: %d", inc.ID))
+		if inc.Status == StatusClosed {
+			irc.Reply(m, fmt.Sprintf("Incident %d was closed, reopening it", inc.ID))
+			inc.Status = StatusOpen
+		}
+		if args[1] == "severity" {
+			severity := parseSeverity(args[2], irc, m)
+			if severity == 0 {
+				return true
+			}
+			inc.severity = severity
+		} else {
+			inc.UpdateDescription(args[2])
+		}
+		if saveIncident(inc, db, irc, m) {
+			irc.Reply(m, fmt.Sprintf("Incident %d updated.", inc.ID))
+		} else {
+			irc.Reply(m, "Update failed. Please see the logs for details.")
+		}
 		return true
 	}
 }

@@ -101,8 +101,8 @@ func (cmd *Command) getAction(c *bot.Configuration, db *sql.DB) TriggerFunc {
 		// Now validate the content of the string
 		matches := cmd.ArgumentsRegexp.FindStringSubmatch(m.Content)
 		if matches == nil {
-			irc.Reply(m, "Could not recognize the command")
-			irc.Reply(m, cmd.HelpMsg)
+			irc.Reply(m, "The command is not properly formatted.")
+			irc.Reply(m, cmd.formatHelp())
 			return false
 		}
 		actionFunc := cmd.action(matches[1:], c, db)

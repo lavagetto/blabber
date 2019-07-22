@@ -2,6 +2,7 @@ package incident
 
 import "blabber/triggers"
 
+// IrcCommands is a container for all commands
 var IrcCommands = []*triggers.Command{
 	triggers.NewCommand(
 		"incident_start",
@@ -10,6 +11,14 @@ var IrcCommands = []*triggers.Command{
 		true,
 		false,
 		startIncident,
+	),
+	triggers.NewCommand(
+		"incident_update",
+		`(?P<id>\d+)\s+(?P<what>severity|description)\s+(?P<value>.+)$`,
+		"Update an incident. You can update either severity or the incident description",
+		true,
+		false,
+		updateIncident,
 	),
 	triggers.NewCommand(
 		"incident_close",

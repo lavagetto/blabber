@@ -52,6 +52,7 @@ func removeTopic(db *sql.DB, channel *string) error {
 }
 
 // Handler functions
+
 // StoreTopic stores the topic of a channel when it changes.
 func StoreTopic(c *bot.Configuration, db *sql.DB) *triggers.EvHandler {
 	return triggers.NewHandler(
