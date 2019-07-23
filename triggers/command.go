@@ -15,19 +15,25 @@ import (
 	Commands section
 */
 type commandClosure func(
-	args []string,
-	c *bot.Configuration,
-	db *sql.DB,
-) TriggerFunc
+	[]string,
+	*hbot.Bot,
+	*hbot.Message,
+	*bot.Configuration,
+	*sql.DB,
+) bool
 
 // Command encapsulates an irc command
 type Command struct {
+	// The command identifier - it will determine how
+	// the command is called
 	ID              string
 	ArgumentsRegexp *regexp.Regexp
 	HelpMsg         string
 	privmsg         bool
 	public          bool
-	action          commandClosure
+	Action          commandClosure
+	Db              *sql.DB
+	Configuration   *bot.Configuration
 }
 
 // NewCommand allows to declare a full-featured IRC command.
@@ -61,56 +67,56 @@ func NewCommand(
 		HelpMsg:         help,
 		privmsg:         private,
 		public:          public,
-		action:          action,
+		Action:          action,
 	}
 	return &command
 }
 
-// Returns the condition
-func (cmd *Command) getCondition(c *bot.Configuration) TriggerFunc {
-	return func(bot *hbot.Bot, m *hbot.Message) bool {
-		// The action is triggered to private messages for !command
-		// or public messages for <bot-nick>: !command
-		// depending on if they're enabled or not
-		if m.Command != "PRIVMSG" {
-			return false
-		}
-
-		if cmd.privmsg && m.To == c.NickName {
-			return strings.HasPrefix(m.Content, "!"+cmd.ID)
-		}
-		if cmd.public && strings.HasPrefix(m.To, "#") {
-			comp := fmt.Sprintf("%s: !%s", c.NickName, cmd.ID)
-			return strings.HasPrefix(m.Content, comp)
-		}
+// Checks if we should act on the event.
+func (cmd Command) isCommand(bot *hbot.Bot, m *hbot.Message) bool {
+	// The action is triggered to private messages for !command
+	// or public messages for <bot-nick>: !command
+	// depending on if they're enabled or not
+	if m.Command != "PRIVMSG" {
 		return false
 	}
-}
-
-func (cmd *Command) getAction(c *bot.Configuration, db *sql.DB) TriggerFunc {
-	return func(irc *hbot.Bot, m *hbot.Message) bool {
-		acl, err := GetACL(cmd.ID, db, c)
-		if err != nil {
-			// We log the issue, but we don't stop admins from being able to perform commands.
-			log.Error("Couldn't fetch the ACLs", "error", err.Error())
-		}
-		if !acl.IsAllowed(m) {
-			irc.Reply(m, "You're not allowed to perform this action.")
-			return true
-		}
-		// Now validate the content of the string
-		matches := cmd.ArgumentsRegexp.FindStringSubmatch(m.Content)
-		if matches == nil {
-			irc.Reply(m, "The command is not properly formatted.")
-			irc.Reply(m, cmd.formatHelp())
-			return false
-		}
-		actionFunc := cmd.action(matches[1:], c, db)
-		return actionFunc(irc, m)
+	if strings.HasPrefix(m.Content, "!"+cmd.ID) {
+		return true
 	}
+	if cmd.public && strings.HasPrefix(m.To, "#") {
+		comp := fmt.Sprintf("%s: !%s", cmd.Configuration.NickName, cmd.ID)
+		return strings.HasPrefix(m.Content, comp)
+	}
+	return false
 }
 
-func (cmd *Command) formatHelp() string {
+func (cmd Command) checkAcl(irc *hbot.Bot, m *hbot.Message) bool {
+	acl, err := GetACL(cmd.ID, cmd.Db, cmd.Configuration)
+	if err != nil {
+		// We log the issue, but we don't stop admins from being able to perform commands.
+		log.Error("Couldn't fetch the ACLs", "error", err.Error())
+	}
+	if !acl.IsAllowed(m) {
+		irc.Reply(m, "You're not allowed to perform this action.")
+		return false
+	} else {
+		return true
+	}
+
+}
+
+func (cmd Command) doAction(irc *hbot.Bot, m *hbot.Message) bool {
+	// Validate the content of the string
+	matches := cmd.ArgumentsRegexp.FindStringSubmatch(m.Content)
+	if matches == nil {
+		irc.Reply(m, "The command is not properly formatted.")
+		irc.Reply(m, cmd.Help())
+		return false
+	}
+	return cmd.Action(matches[1:], irc, m, cmd.Configuration, cmd.Db)
+}
+
+func (cmd Command) Help() string {
 	parameters := []string{fmt.Sprintf("!%s", cmd.ID)}
 	for i, parameter := range cmd.ArgumentsRegexp.SubexpNames()[1:] {
 		if parameter == "" {
@@ -122,10 +128,11 @@ func (cmd *Command) formatHelp() string {
 
 }
 
-func (cmd *Command) getHandler() handlerClosure {
-	return func(c *bot.Configuration, db *sql.DB) *EvHandler {
-		condition := cmd.getCondition(c)
-		action := cmd.getAction(c, db)
-		return NewHandler(condition, action, cmd.formatHelp())
+func (cmd Command) Handle(irc *hbot.Bot, m *hbot.Message) bool {
+	//log.Info("Handling message", "command", m.Command, "to", m.To, "content", m.Content)
+	if cmd.isCommand(irc, m) && cmd.checkAcl(irc, m) {
+		return cmd.doAction(irc, m)
+	} else {
+		return false
 	}
 }

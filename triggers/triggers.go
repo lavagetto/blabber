@@ -12,57 +12,84 @@ import (
 	hbot "github.com/whyrusleeping/hellabot"
 )
 
-type TriggerFunc func(bot *hbot.Bot, m *hbot.Message) bool
+// TriggerFunc is the format of the functions we expect.
+// They depend on the irc bot, the message, the db and the configuration
+type TriggerFunc func(*hbot.Bot, *hbot.Message, *sql.DB, *bot.Configuration) bool
+
+type HelpHandler interface {
+	Handle(*hbot.Bot, *hbot.Message) bool
+	Help() string
+}
 
 // EvHandler is the basic structure for holding information about an
 // irc trigger. For most interactive commands, where you want to define ACLs,
 // input validation, etc. you should use Command instead.
 type EvHandler struct {
-	condition TriggerFunc
-	action    TriggerFunc
-	HelpMsg   string
+	Handler TriggerFunc
+	HelpMsg string
+	Config  *bot.Configuration
+	Db      *sql.DB
 }
 
-// NewHandler generates a new handler for use in code.
-func NewHandler(condition TriggerFunc, action TriggerFunc, HelpMsg string) *EvHandler {
-	return &EvHandler{condition: condition, action: action, HelpMsg: HelpMsg}
+// Handle manages event hooks to see if they're appliable to the incoming request
+func (ev EvHandler) Handle(irc *hbot.Bot, m *hbot.Message) bool {
+	// Exactly like a common trigger
+	return ev.Handler(irc, m, ev.Db, ev.Config)
 }
-func (ev *EvHandler) getTrigger() hbot.Trigger {
-	return hbot.Trigger{Condition: ev.condition, Action: ev.action}
+
+func (ev EvHandler) Help() string {
+	return ev.HelpMsg
 }
 
 // Registry is a container for all event handlers.
 type Registry struct {
-	handlers map[string]*EvHandler
-	config   *bot.Configuration
-	db       *sql.DB
+	// All the handlers, by ID
+	handlers map[string]HelpHandler
+	// Configuration
+	config *bot.Configuration
+	// Database handle
+	db *sql.DB
 }
 
+// NewRegistry creates a new empty registry.
 func NewRegistry(c *bot.Configuration, db *sql.DB) *Registry {
 	var r Registry
-	r.handlers = make(map[string]*EvHandler)
+	r.handlers = make(map[string]HelpHandler)
 	r.config = c
 	r.db = db
 	return &r
 }
 
-type handlerClosure func(config *bot.Configuration, db *sql.DB) *EvHandler
-
 // Register an handler. This is the basic interface you should use if you're not crating
 // a proper command, but rather a trigger.
 // For interactive commands, please use RegisterCommand below.
-func (r *Registry) Register(id string, handler handlerClosure) error {
+func (r *Registry) Register(id string, handler TriggerFunc, help string) error {
 	if _, ok := r.handlers[id]; ok {
 		msg := fmt.Sprintf("Cannot register handler with id '%s' twice", id)
 		return errors.New(msg)
 	}
-	r.handlers[id] = handler(r.config, r.db)
+	var h HelpHandler = EvHandler{
+		Handler: handler,
+		HelpMsg: help,
+		Db:      r.db,
+		Config:  r.config,
+	}
+	r.handlers[id] = h
 	return nil
 }
 
 // RegisterCommand allows to register a full-featured IRC command.
 func (r *Registry) RegisterCommand(command *Command) error {
-	return r.Register(command.ID, command.getHandler())
+	id := command.ID
+	command.Db = r.db
+	command.Configuration = r.config
+	if _, ok := r.handlers[id]; ok {
+		msg := fmt.Sprintf("Cannot register handler with id '%s' twice", id)
+		return errors.New(msg)
+	}
+	var h HelpHandler = *command
+	r.handlers[id] = h
+	return nil
 }
 
 func (r *Registry) RegisterCommands(commands []*Command) error {
@@ -81,9 +108,9 @@ func (r *Registry) Deregister(id string) {
 }
 
 func (r *Registry) AddAll(b *bot.Bot) {
-	for id, EvHandler := range r.handlers {
+	for id, Handler := range r.handlers {
 		log.Info("Registering handler", "id", id)
-		b.Irc.AddTrigger(EvHandler.getTrigger())
+		b.Irc.AddTrigger(Handler)
 	}
 	r.addHelp(b)
 }
@@ -93,12 +120,7 @@ func (r *Registry) addHelp(b *bot.Bot) {
 	b.Irc.AddTrigger(
 		hbot.Trigger{
 			Condition: func(bot *hbot.Bot, m *hbot.Message) bool {
-				if m.Command == "PRIVMSG" && m.Content == "!help" {
-					return true
-				} else if m.Content == fmt.Sprintf("%s: !help", r.config.NickName) {
-					return true
-				}
-				return false
+				return m.Command == "PRIVMSG" && m.Content == "!help"
 			},
 			Action: func(bot *hbot.Bot, m *hbot.Message) bool {
 				bot.Reply(m, fmt.Sprintf("%s - irc bot for handling outages", r.config.NickName))
@@ -111,13 +133,13 @@ func (r *Registry) addHelp(b *bot.Bot) {
 				}
 				sort.Strings(handlers)
 				for _, id := range handlers {
-					EvHandler, ok := r.handlers[id]
+					handler, ok := r.handlers[id]
 					if !ok {
 						// TODO: log something
 						continue
 					}
-					if EvHandler.HelpMsg != "" {
-						bot.Reply(m, fmt.Sprintf("%-16s%s\n", id, EvHandler.HelpMsg))
+					if handler.Help() != "" {
+						bot.Reply(m, fmt.Sprintf("%-16s%s\n", id, handler.Help()))
 					}
 				}
 				return true

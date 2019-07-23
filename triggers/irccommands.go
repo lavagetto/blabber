@@ -20,14 +20,12 @@ var lyrics = []string{
 	"Never gonna tell a lie and hurt you",
 }
 
-func rickRollAction(args []string, c *bot.Configuration, db *sql.DB) TriggerFunc {
-	return func(bot *hbot.Bot, m *hbot.Message) bool {
-		for _, line := range lyrics {
-			bot.Reply(m, line)
-			time.Sleep(800 * time.Millisecond)
-		}
-		return true
+func rickRollAction(args []string, bot *hbot.Bot, m *hbot.Message, c *bot.Configuration, db *sql.DB) bool {
+	for _, line := range lyrics {
+		bot.Reply(m, line)
+		time.Sleep(800 * time.Millisecond)
 	}
+	return true
 }
 
 var IrcCommands = []*Command{

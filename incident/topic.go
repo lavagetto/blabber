@@ -2,7 +2,6 @@ package incident
 
 import (
 	"blabber/bot"
-	"blabber/triggers"
 	"database/sql"
 
 	hbot "github.com/whyrusleeping/hellabot"
@@ -54,21 +53,17 @@ func removeTopic(db *sql.DB, channel *string) error {
 // Handler functions
 
 // StoreTopic stores the topic of a channel when it changes.
-func StoreTopic(c *bot.Configuration, db *sql.DB) *triggers.EvHandler {
-	return triggers.NewHandler(
-		isTopicChange,
-		func(bot *hbot.Bot, m *hbot.Message) bool {
-			var channel string
-			if m.Command == RplTopic {
-				channel = m.Params[1]
-			} else {
-				channel = m.To
-			}
-			saveTopic(db, &channel, &m.Content)
-			bot.Logger.Info("Logging topic change!", "channel", channel, "topic", m.Content)
-
-			return false
-		},
-		"",
-	)
+func StoreTopic(irc *hbot.Bot, m *hbot.Message, db *sql.DB, c *bot.Configuration) bool {
+	if isTopicChange(irc, m) {
+		var channel string
+		if m.Command == RplTopic {
+			channel = m.Params[1]
+		} else {
+			channel = m.To
+		}
+		saveTopic(db, &channel, &m.Content)
+		irc.Logger.Info("Logging topic change!", "channel", channel, "topic", m.Content)
+	}
+	// we don't stop processing
+	return false
 }
