@@ -93,75 +93,69 @@ func DeleteACL(command string, identifier string, db *sql.DB) error {
 }
 
 // IRC actions
-func addACL(args []string, c *bot.Configuration, db *sql.DB) TriggerFunc {
-	return func(irc *hbot.Bot, m *hbot.Message) bool {
-		if len(args) != 2 {
-			irc.Reply(m, "Somehow we got the wrong number of arguments.")
-			return false
-		}
-		command := args[0]
-		identifier := args[1]
-		// First let's check if the ACL is already present.
-		if ExistsACL(command, identifier, db) {
-			irc.Reply(m, "This ACL is already present.")
-			return false
-		} else {
-			err := SaveACL(command, identifier, db)
-			if err != nil {
-				log.Error("Problem saving ACLs:", "error", err.Error())
-				irc.Reply(m, "Couldn't save the new ACL.")
-				return false
-			}
-		}
-		irc.Reply(m, "The ACL was saved.")
-		return true
+func addACL(args []string, irc *hbot.Bot, m *hbot.Message, c *bot.Configuration, db *sql.DB) bool {
+	if len(args) != 2 {
+		irc.Reply(m, "Somehow we got the wrong number of arguments.")
+		return false
 	}
+	command := args[0]
+	identifier := args[1]
+	// First let's check if the ACL is already present.
+	if ExistsACL(command, identifier, db) {
+		irc.Reply(m, "This ACL is already present.")
+		return false
+	} else {
+		err := SaveACL(command, identifier, db)
+		if err != nil {
+			log.Error("Problem saving ACLs:", "error", err.Error())
+			irc.Reply(m, "Couldn't save the new ACL.")
+			return false
+		}
+	}
+	irc.Reply(m, "The ACL was saved.")
+	return true
 }
 
 // Special command to remove an acl rule
-func removeAcl(args []string, c *bot.Configuration, db *sql.DB) TriggerFunc {
-	return func(irc *hbot.Bot, m *hbot.Message) bool {
-		if len(args) != 2 {
-			irc.Reply(m, "Somehow we got the wrong number of arguments.")
-			return false
-		}
-		command := args[0]
-		identifier := args[1]
-		// First let's check if the ACL is already present.
-		if !ExistsACL(command, identifier, db) {
-			irc.Reply(m, "This ACL is not present.")
-			return false
-		} else {
-			err := DeleteACL(command, identifier, db)
-			if err != nil {
-				log.Error("Problem removing ACLs:", "error", err.Error())
-				irc.Reply(m, "Couldn't remove the ACL.")
-				return false
-			}
-		}
-		irc.Reply(m, "The ACL was succesfully removed.")
-		return true
+func removeAcl(args []string, irc *hbot.Bot, m *hbot.Message, c *bot.Configuration, db *sql.DB) bool {
+	if len(args) != 2 {
+		irc.Reply(m, "Somehow we got the wrong number of arguments.")
+		return false
 	}
+	command := args[0]
+	identifier := args[1]
+	// First let's check if the ACL is already present.
+	if !ExistsACL(command, identifier, db) {
+		irc.Reply(m, "This ACL is not present.")
+		return false
+	} else {
+		err := DeleteACL(command, identifier, db)
+		if err != nil {
+			log.Error("Problem removing ACLs:", "error", err.Error())
+			irc.Reply(m, "Couldn't remove the ACL.")
+			return false
+		}
+	}
+	irc.Reply(m, "The ACL was succesfully removed.")
+	return true
 }
 
-func readAcl(args []string, c *bot.Configuration, db *sql.DB) TriggerFunc {
-	return func(irc *hbot.Bot, m *hbot.Message) bool {
-		command := args[0]
-		myAcl, err := GetACL(command, db, c)
-		if err != nil {
-			irc.Reply(m, "Could not fetch the requested ACL:")
-			irc.Reply(m, err.Error())
-			return true
-		}
-		irc.Reply(m, fmt.Sprintf("ACL for %s", command))
-		irc.Reply(m, "Users:")
-		for nick := range myAcl.nicks {
-			irc.Reply(m, fmt.Sprintf("\t%s", nick))
-		}
-		irc.Reply(m, "Channels:")
-		for channel := range myAcl.channels {
-			irc.Reply(m, fmt.Sprintf("\t%s", channel))
-		}
+func readAcl(args []string, irc *hbot.Bot, m *hbot.Message, c *bot.Configuration, db *sql.DB) bool {
+	command := args[0]
+	myAcl, err := GetACL(command, db, c)
+	if err != nil {
+		irc.Reply(m, "Could not fetch the requested ACL:")
+		irc.Reply(m, err.Error())
 		return true
 	}
+	irc.Reply(m, fmt.Sprintf("ACL for %s", command))
+	irc.Reply(m, "Users:")
+	for nick := range myAcl.nicks {
+		irc.Reply(m, fmt.Sprintf("\t%s", nick))
+	}
+	irc.Reply(m, "Channels:")
+	for channel := range myAcl.channels {
+		irc.Reply(m, fmt.Sprintf("\t%s", channel))
+	}
+	return true
 }

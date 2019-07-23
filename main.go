@@ -44,7 +44,7 @@ func main() {
 	// Basic bot - does rickrolling and manages ACLs
 	registry.RegisterCommands(triggers.IrcCommands)
 	// Incident related - the first is a simple event handler with no command associated
-	registry.Register("topic", incident.StoreTopic)
+	registry.Register("store_topic", incident.StoreTopic, "")
 	registry.RegisterCommands(incident.IrcCommands)
 	// Contact list related
 	registry.RegisterCommands(contact.IrcCommands)

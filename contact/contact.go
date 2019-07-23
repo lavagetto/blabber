@@ -65,54 +65,46 @@ func (self *Contact) Remove(db *sql.DB) error {
 	return err
 }
 
-func addContactAction(args []string, c *bot.Configuration, db *sql.DB) triggers.TriggerFunc {
-	return func(bot *hbot.Bot, m *hbot.Message) bool {
-		c := Contact{name: args[0], phone: args[1], email: args[2]}
-		err := c.Save(db)
-		if err == nil {
-			bot.Reply(m, "Contact added successfully.")
-		} else {
-			bot.Reply(m, "Trouble saving the contact, please try again later.")
-			log.Error(err.Error())
-		}
-		return true
+func addContactAction(args []string, bot *hbot.Bot, m *hbot.Message, c *bot.Configuration, db *sql.DB) bool {
+	contact := Contact{name: args[0], phone: args[1], email: args[2]}
+	err := contact.Save(db)
+	if err == nil {
+		bot.Reply(m, "Contact added successfully.")
+	} else {
+		bot.Reply(m, "Trouble saving the contact, please try again later.")
+		log.Error(err.Error())
 	}
+	return true
 }
 
-func removeContactAction(args []string, c *bot.Configuration, db *sql.DB) triggers.TriggerFunc {
-	return func(bot *hbot.Bot, m *hbot.Message) bool {
-		c, err := GetContact(db, args[0])
-		if err != nil {
-			bot.Reply(m, "Couldn't find the contact you searched for")
-			log.Error(err.Error())
-			return true
-		}
-		err = c.Remove(db)
-		if err != nil {
-			bot.Reply(m, "Couldn't remove contact, check logs for the error.")
-			log.Error("Error removing contact:", "error", err.Error(), "contact", c.PrettyPrint())
-		} else {
-			bot.Reply(m, "Contact successfully removed.")
-		}
+func removeContactAction(args []string, bot *hbot.Bot, m *hbot.Message, c *bot.Configuration, db *sql.DB) bool {
+	contact, err := GetContact(db, args[0])
+	if err != nil {
+		bot.Reply(m, "Couldn't find the contact you searched for")
+		log.Error(err.Error())
 		return true
 	}
+	err = contact.Remove(db)
+	if err != nil {
+		bot.Reply(m, "Couldn't remove contact, check logs for the error.")
+		log.Error("Error removing contact:", "error", err.Error(), "contact", contact.PrettyPrint())
+	} else {
+		bot.Reply(m, "Contact successfully removed.")
+	}
+	return true
 }
 
-func getContactAction(args []string, c *bot.Configuration, db *sql.DB) triggers.TriggerFunc {
-	return func(bot *hbot.Bot, m *hbot.Message) bool {
-		c, err := GetContact(db, args[0])
-		if err != nil {
-			bot.Reply(m, "Couldn't find the contact you searched for")
-			log.Error(err.Error())
-			return true
-		} else if c.phone == "" {
-			bot.Reply(m, "No phone data for the contact")
-			return true
-		} else {
-			bot.Reply(m, c.PrettyPrint())
-		}
-		return true
+func getContactAction(args []string, bot *hbot.Bot, m *hbot.Message, c *bot.Configuration, db *sql.DB) bool {
+	contact, err := GetContact(db, args[0])
+	if err != nil {
+		bot.Reply(m, "Couldn't find the contact you searched for")
+		log.Error(err.Error())
+	} else if contact.phone == "" {
+		bot.Reply(m, "No phone data for the contact")
+	} else {
+		bot.Reply(m, contact.PrettyPrint())
 	}
+	return true
 }
 
 // Commands
