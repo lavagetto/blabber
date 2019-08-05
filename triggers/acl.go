@@ -159,3 +159,14 @@ func readAcl(args []string, irc *hbot.Bot, m *hbot.Message, c *bot.Configuration
 	}
 	return true
 }
+
+func changePass(args []string, irc *hbot.Bot, m *hbot.Message, c *bot.Configuration, db *sql.DB) bool {
+	newPass := args[0]
+	// Make a message to nickserv. I know this is hacky, but better than forging a message from scratch.
+	requestor := m.From
+	m.From = "NickServ"
+	irc.Reply(m, fmt.Sprintf("SET PASSWORD %s", newPass))
+	m.From = requestor
+	irc.Reply(m, "Password changed. Do not forget to change the configuration too.")
+	return false
+}

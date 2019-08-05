@@ -43,10 +43,11 @@ type Incident struct {
 	Description string
 	Status      int64
 	ID          int64
+	Document    RemoteDocument
 }
 
 // NewIncident creates an Incident object, and returns it
-func NewIncident(severity int64, components []string) (*Incident, error) {
+func NewIncident(severity int64, components []string, c *bot.Configuration) (*Incident, error) {
 	if severity > 5 || severity < 1 {
 		return nil, errors.New("Severity must be between 1 and 5")
 	}
@@ -72,6 +73,17 @@ func NewIncident(severity int64, components []string) (*Incident, error) {
 		updatedAt:  time.Now(),
 		Status:     StatusOpen,
 	}
+	// Try to create the remote document.
+	document := NewGoogleDoc()
+	if document != nil {
+		date := time.Now().Format("2006-01-02")
+		title := fmt.Sprintf("%s - %s", date, strings.Join(components, ", "))
+		if err := document.NewFromTemplate(title, c); err != nil {
+			log.Error("Error saving the document", "error", err)
+		} else {
+			inc.Document = document
+		}
+	}
 	return &inc, nil
 }
 
@@ -79,9 +91,9 @@ func NewIncident(severity int64, components []string) (*Incident, error) {
 func (i *Incident) Save(db *sql.DB) error {
 	var query string
 	if i.ID == 0 {
-		query = "INSERT INTO incidents (severity, components, started_at, updated_at, status, description) VALUES (?, ?, ?, ?, ?, ?)"
+		query = "INSERT INTO incidents (severity, components, started_at, updated_at, status, description, document_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
 	} else {
-		query = "UPDATE incidents SET severity=?, components=?, updated_at=?, status=?, description=? WHERE id = ?"
+		query = "UPDATE incidents SET severity=?, components=?, updated_at=?, status=?, description=?, document_id=? WHERE id = ?"
 	}
 	statement, err := db.Prepare(query)
 	if err != nil {
@@ -90,12 +102,16 @@ func (i *Incident) Save(db *sql.DB) error {
 	started := i.startedAt.Format(time.RFC3339)
 	updated := i.updatedAt.Format(time.RFC3339)
 	components := strings.Join(i.components, ", ")
+	var documentID string
+	if i.Document != nil {
+		documentID = i.Document.Id()
+	}
 	if i.ID == 0 {
 		var result sql.Result
-		result, err = statement.Exec(i.severity, components, started, updated, i.Status, i.Description)
+		result, err = statement.Exec(i.severity, components, started, updated, i.Status, i.Description, documentID)
 		i.ID, err = result.LastInsertId()
 	} else {
-		_, err = statement.Exec(i.severity, components, updated, i.Status, i.Description, i.ID)
+		_, err = statement.Exec(i.severity, components, updated, i.Status, i.Description, documentID, i.ID)
 	}
 	return err
 }
@@ -111,7 +127,7 @@ func (i *Incident) UpdateDescription(update string) {
 }
 
 // Summary formats a simple summary of an incident
-func (i *Incident) Summary() string {
+func (i *Incident) Summary(extended bool) string {
 	if i.Status == StatusClosed {
 		return "Up"
 	}
@@ -121,6 +137,9 @@ func (i *Incident) Summary() string {
 	} else {
 		severity = "down"
 	}
+	if extended && i.Document != nil {
+		return fmt.Sprintf("%s %s (#%d - docs at %s)", strings.Join(i.components, ", "), severity, i.ID, i.Document.Url())
+	}
 	return fmt.Sprintf("%s %s (#%d)", strings.Join(i.components, ", "), severity, i.ID)
 }
 
@@ -129,7 +148,8 @@ func incidentFromDbRows(rows *sql.Rows) (*Incident, error) {
 	var components string
 	var updated string
 	var started string
-	err := rows.Scan(&inc.ID, &inc.severity, &components, &started, &updated, &inc.Status, &inc.Description)
+	var docId string
+	err := rows.Scan(&inc.ID, &inc.severity, &components, &started, &updated, &inc.Status, &inc.Description, &docId)
 	if err != nil {
 		return nil, err
 	}
@@ -141,6 +161,14 @@ func incidentFromDbRows(rows *sql.Rows) (*Incident, error) {
 	inc.updatedAt, err = time.Parse(time.RFC3339, updated)
 	if err != nil {
 		return nil, err
+	}
+	doc := NewGoogleDoc()
+	if doc != nil {
+		if err := doc.GetFromId(docId); err != nil {
+			log.Error("Could not find the document", "id", doc, "error", err)
+		} else {
+			inc.Document = doc
+		}
 	}
 	return &inc, err
 }
@@ -164,7 +192,7 @@ func getFromDb(statement *sql.Stmt, arg int64) ([]*Incident, error) {
 
 // GetByID fetches one incident from the database
 func GetByID(db *sql.DB, id int64) (*Incident, error) {
-	statement, err := db.Prepare("SELECT id, severity, components, started_at, updated_at, status, description from incidents WHERE id = ?")
+	statement, err := db.Prepare("SELECT id, severity, components, started_at, updated_at, status, description, document_id from incidents WHERE id = ?")
 	if err != nil {
 		return nil, err
 	}
@@ -173,12 +201,11 @@ func GetByID(db *sql.DB, id int64) (*Incident, error) {
 		return nil, err
 	}
 	return incidents[0], nil
-
 }
 
 // GetOpenIncidents returns the currently open incidents
 func GetOpenIncidents(db *sql.DB) ([]*Incident, error) {
-	statement, err := db.Prepare("SELECT id, severity, components, started_at, updated_at, status, description from incidents WHERE status = ?")
+	statement, err := db.Prepare("SELECT id, severity, components, started_at, updated_at, status, description, document_id from incidents WHERE status = ?")
 	if err != nil {
 		return nil, err
 	}
@@ -187,12 +214,13 @@ func GetOpenIncidents(db *sql.DB) ([]*Incident, error) {
 
 // IRC action functions
 // The topic gets updated with the current incident status
-func updateTopic(irc *hbot.Bot, db *sql.DB, channel string) error {
+func updateTopic(irc *hbot.Bot, db *sql.DB, channel string, c *bot.Configuration) error {
 	incidents, err := GetOpenIncidents(db)
 	if err != nil {
 		return err
 	}
-	topic, err := GetTopic(db, channel)
+
+	topic, err := NewTopic(db, channel).Get()
 	if err != nil {
 		return err
 	}
@@ -203,20 +231,24 @@ func updateTopic(irc *hbot.Bot, db *sql.DB, channel string) error {
 	} else {
 		var summaries []string
 		for _, incident := range incidents {
-			summaries = append(summaries, incident.Summary())
+			// Only publish a full summary (including the gdoc address) if in a public channel.
+			summaries = append(summaries, incident.Summary(c.IsPublicChannel(channel)))
 		}
 		status = strings.Join(summaries, " / ")
 	}
 	topicRegex := regexp.MustCompile("^(.*)\\| Status: ([^\\|]+)(.*)$")
-	matches := topicRegex.FindStringSubmatch(*topic)
+	matches := topicRegex.FindStringSubmatch(topic)
 	// No status line. Append it to the end of the topic
 	if matches == nil {
-		irc.Topic(channel, fmt.Sprintf("%s | Status: %s", *topic, status))
+		irc.Topic(channel, fmt.Sprintf("%s | Status: %s", topic, status))
 	} else {
 		if matches[3] != "" {
 			// Add Padding
 			status += " "
 		}
+		// If the topic needs an update, do it.
+		// Note we don't save the topic to the db,
+		// that will be handled by another handler.
 		if status != matches[2] {
 			newTopic := fmt.Sprintf("%s | Status: %s%s", matches[1], status, matches[3])
 			irc.Topic(channel, newTopic)
@@ -232,18 +264,29 @@ func parseSeverity(severityString string, irc *hbot.Bot, m *hbot.Message) int64 
 		return 0
 	}
 	return severity
-
 }
 
-func saveIncident(incident *Incident, db *sql.DB, irc *hbot.Bot, m *hbot.Message) bool {
+func saveIncident(incident *Incident, db *sql.DB, irc *hbot.Bot, m *hbot.Message, c *bot.Configuration) bool {
 	err := incident.Save(db)
 	if err != nil {
+		irc.Reply(m, "Could not save the incident, please check the logs for errors")
 		log.Error("Could not update incident", "error", err.Error(), "incident", incident.ID)
 		return false
 	}
-	if err = updateTopic(irc, db, m.To); err != nil {
-		irc.Reply(m, "Could not update the channel topic. Check my permissions please.")
-		log.Error("Error updating the channel topic", "error", err.Error())
+
+	// Change the topic in all channels, report errors just to the issuer of the command in private.
+	for _, channel := range c.Channels {
+		// In general, we report failures in private to the issuer of the command. But if the channel is
+		// the one where the command was issued, respond in public.
+		// We therefore mangle m.To
+		myMessage := *m
+		if channel != m.To {
+			myMessage.To = irc.Nick
+		}
+		if err = updateTopic(irc, db, channel, c); err != nil {
+			irc.Reply(&myMessage, "Could not update the channel topic. Check my permissions please.")
+			log.Error("Error updating the channel topic", "error", err.Error())
+		}
 	}
 	return true
 }
@@ -256,14 +299,14 @@ func startIncident(args []string, irc *hbot.Bot, m *hbot.Message, c *bot.Configu
 		return true
 	}
 	components := splitRegex.Split(args[1], -1)
-	inc, err := NewIncident(severity, components)
+	inc, err := NewIncident(severity, components, c)
 	if err != nil {
 		irc.Reply(m, "Invalid parameters: ")
 		irc.Reply(m, err.Error())
 		return true
 	}
-	if saveIncident(inc, db, irc, m) {
-		irc.Reply(m, fmt.Sprintf("Incident saved: %s", inc.Summary()))
+	if saveIncident(inc, db, irc, m, c) {
+		irc.Reply(m, fmt.Sprintf("Incident saved: %s", inc.Summary(true)))
 	} else {
 		irc.Reply(m, "Error creating the incident, check the logs for details.")
 		log.Error("Error saving a new incident", "error", err.Error())
@@ -299,7 +342,7 @@ func stopIncident(args []string, irc *hbot.Bot, m *hbot.Message, c *bot.Configur
 		return true
 	}
 	inc.Status = StatusClosed
-	if saveIncident(inc, db, irc, m) {
+	if saveIncident(inc, db, irc, m, c) {
 		irc.Reply(m, fmt.Sprintf("Incident closed: %d", inc.ID))
 	} else {
 		irc.Reply(m, "Could not close the incident, see logs for details.")
@@ -325,10 +368,51 @@ func updateIncident(args []string, irc *hbot.Bot, m *hbot.Message, c *bot.Config
 	} else {
 		inc.UpdateDescription(args[2])
 	}
-	if saveIncident(inc, db, irc, m) {
+	if saveIncident(inc, db, irc, m, c) {
 		irc.Reply(m, fmt.Sprintf("Incident %d updated.", inc.ID))
 	} else {
 		irc.Reply(m, "Update failed. Please see the logs for details.")
 	}
 	return true
+}
+
+func listOpenIncidents(args []string, irc *hbot.Bot, m *hbot.Message, c *bot.Configuration, db *sql.DB) bool {
+	incidents, err := GetOpenIncidents(db)
+	if err != nil {
+		irc.Reply(m, "Could not retrieve the list of open incidents. Please check the logs")
+		log.Error("Could not retrieve the list of open incidents from the database", "error", err)
+		return false
+	} else if len(incidents) == 0 {
+		irc.Reply(m, "No open incidents! 👍")
+
+	} else {
+		irc.Reply(m, "Open incidents:")
+		for _, incident := range incidents {
+			line := fmt.Sprintf("  * %s", incident.Summary(false))
+			irc.Reply(m, line)
+		}
+	}
+	return false
+}
+
+func formatIncident(args []string, irc *hbot.Bot, m *hbot.Message, c *bot.Configuration, db *sql.DB) bool {
+	inc := getIncidentFromIDParam(args[0], irc, m, db)
+	if inc == nil {
+		return true
+	}
+	if inc.Status == StatusClosed {
+		irc.Reply(m, fmt.Sprintf("Incident %d is closed. Last update was at %v", inc.ID, inc.updatedAt))
+	} else {
+		irc.Reply(m, "-- ")
+		irc.Reply(m, "== "+inc.Summary(false))
+		irc.Reply(m, "Description:")
+		for _, line := range strings.Split(inc.Description, "\n") {
+			irc.Reply(m, line)
+		}
+		if inc.Document != nil && inc.Document.Url() != "<not available>" {
+			irc.Reply(m, " \n")
+			irc.Reply(m, "Google Doc: "+inc.Document.Url())
+		}
+	}
+	return false
 }

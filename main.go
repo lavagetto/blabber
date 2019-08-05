@@ -39,6 +39,9 @@ func main() {
 		panic(err)
 	}
 	defer bbot.DB.Close()
+	// Populate the google drive configuration
+	incident.GDriveConfig.CredentialsFileName = conf.AuthCredentials
+	incident.GDriveConfig.TokenFileName = conf.AuthToken
 
 	registry := triggers.NewRegistry(conf, bbot.DB)
 	// Basic bot - does rickrolling and manages ACLs
