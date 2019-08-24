@@ -41,13 +41,14 @@ type Command struct {
 // boilerplate of authz/authn, and also guarantees uniformity of implementation.
 
 // Arguments:
-// name string the command identifier, that will be used to call it
+// name string  it
 // regexString string representing a regexp to match the command parameters, if any.
 //   Use subgroup matching with named parameters if you want an automatic pretty-print in the help
 // public bool indicating if this command can be called (and replied to) in public
 // private bool indication if this command can be called (and replied to) in private message
 // action a commandClosure function that describes the action to take.
 func NewCommand(
+	// the command identifier, that will be used to call it
 	name string,
 	regexString string,
 	help string,
@@ -57,9 +58,10 @@ func NewCommand(
 ) *Command {
 	var fullRegexp string
 	if regexString == "" {
-		fullRegexp = fmt.Sprintf("\\!%s\\s*$", name)
+		fullRegexp = fmt.Sprintf(`\!(%s)\s*$`, name)
+	} else {
+		fullRegexp = fmt.Sprintf("\\!%s\\s%s", name, regexString)
 	}
-	fullRegexp = fmt.Sprintf("\\!%s\\s%s", name, regexString)
 	argRegexp := regexp.MustCompile(fullRegexp)
 	command := Command{
 		ID:              name,

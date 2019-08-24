@@ -14,39 +14,51 @@ func isTopicChange(bot *hbot.Bot, m *hbot.Message) bool {
 	return m.Command == RplTopic || m.Command == "TOPIC"
 }
 
-// Db interface
-
-// GetTopic gets the topic for a channel from the db
-func GetTopic(db *sql.DB, channel string) (*string, error) {
-	var topic string
-	err := db.QueryRow(
-		"SELECT topic FROM topics WHERE channel = ?",
-		channel).Scan(&topic)
-	return &topic, err
+// Topic structure
+type Topic struct {
+	Channel string
+	db      *sql.DB
 }
 
-func saveTopic(db *sql.DB, channel *string, topic *string) error {
-	query := "UPDATE topics SET topic = ? WHERE channel = ?"
-	_, err := GetTopic(db, *channel)
+// NewTopic returns a new topic.
+func NewTopic(db *sql.DB, channel string) *Topic {
+	return &Topic{Channel: channel, db: db}
+}
 
-	if err != nil {
+// Get returns the topic, fetching it from the database.
+// It also returns any error found while fetching the data.
+func (t *Topic) Get() (string, error) {
+	var topic string
+	err := t.db.QueryRow(
+		"SELECT topic FROM topics WHERE channel = ?",
+		t.Channel).Scan(&topic)
+	return topic, err
+}
+
+// Save persists the topic to the database.
+func (t *Topic) Save(topic *string) error {
+	var query string
+	if _, err := t.Get(); err != nil {
 		query = "INSERT INTO topics (topic, channel) VALUES (?, ?)"
+	} else {
+		query = "UPDATE topics SET topic = ? WHERE channel = ?"
 	}
 
-	statement, err := db.Prepare(query)
+	statement, err := t.db.Prepare(query)
 	if err != nil {
 		return err
 	}
-	_, err = statement.Exec(topic, channel)
+	_, err = statement.Exec(&topic, &t.Channel)
 	return err
 }
 
-func removeTopic(db *sql.DB, channel *string) error {
-	statement, err := db.Prepare("DELETE FROM topics WHERE channel = ?")
+// Clean removes the topic from the database
+func (t *Topic) Clean() error {
+	statement, err := t.db.Prepare("DELETE FROM topics WHERE channel = ?")
 	if err != nil {
 		return err
 	}
-	_, err = statement.Exec(channel)
+	_, err = statement.Exec(t.Channel)
 	return err
 }
 
@@ -56,14 +68,23 @@ func removeTopic(db *sql.DB, channel *string) error {
 func StoreTopic(irc *hbot.Bot, m *hbot.Message, db *sql.DB, c *bot.Configuration) bool {
 	if isTopicChange(irc, m) {
 		var channel string
+		// The channel is stored in Params[1] when joining a channel
+		// and in m.To when we did a topic change.
 		if m.Command == RplTopic {
 			channel = m.Params[1]
 		} else {
 			channel = m.To
 		}
-		saveTopic(db, &channel, &m.Content)
-		irc.Logger.Info("Logging topic change!", "channel", channel, "topic", m.Content)
+		t := NewTopic(db, channel)
+		// This can block a bit when we're joining the channels.
+		go func() {
+			if err := t.Save(&m.Content); err != nil {
+				irc.Logger.Error("Could not save the topic to the database", "channel", t.Channel, "error", err)
+			} else {
+				irc.Logger.Info("Logging topic change!", "channel", channel, "topic", m.Content)
+			}
+		}()
 	}
-	// we don't stop processing
+	// we don't stop processing in any case.
 	return false
 }

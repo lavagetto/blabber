@@ -61,4 +61,12 @@ var IrcCommands = []*Command{
 		true,
 		readAcl,
 	),
+	NewCommand(
+		"change_pass",
+		"(?P<password>\\S+)\\s*$",
+		"Changes the nickserv password",
+		false,
+		true,
+		changePass,
+	),
 }

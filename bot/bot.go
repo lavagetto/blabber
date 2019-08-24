@@ -27,7 +27,7 @@ func NewBot(config *Configuration) (*Bot, error) {
 		}
 		if config.UseSASL {
 			bot.SASL = true
-			bot.Password = config.Password //"TrentaTreTrentin1"
+			bot.Password = config.Password
 		}
 
 	}
