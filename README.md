@@ -18,7 +18,7 @@ A typical configuration file will look as follows:
     "password": "mysecretpassword",
     "use_sasl": true,
     "channels": ["#channel1", "#channel2"],
-    "db_dsn": "sqlite:///srv/blabber/blabber.db
+    "db_dsn": "sqlite3:///srv/blabber/blabber.db"
 }
 ```
 To generate the schema of the database, run:
