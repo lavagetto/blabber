@@ -1,6 +1,7 @@
 vendor/*
 config.json
 blabber.db
+blabber
 credentials.json
 token.json
 *.code-workspace

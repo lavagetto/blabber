@@ -32,6 +32,7 @@ func main() {
 	flag.Parse()
 	conf, err := bot.GetConfig(*configFile)
 	if err != nil {
+		log.Error(err.Error())
 		log.Info("Could not open configuration file")
 	}
 	bbot, err := bot.NewBot(conf)

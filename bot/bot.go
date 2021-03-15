@@ -42,6 +42,9 @@ func NewBot(config *Configuration) (*Bot, error) {
 		return nil, err
 	}
 	db, err := newSQL(config.DbDsn)
+	if err != nil {
+		return nil, err
+	}
 	b := Bot{irc, db}
 	return &b, nil
 }
